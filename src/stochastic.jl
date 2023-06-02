@@ -69,21 +69,9 @@ S = coproduct((FinSet∘nstates).(xs))
 states(b::Int) = legs(S)[b].func
 state_map = legs(S′)[1]
 
-# 1. for each box, we need to make the rate function and affects! function
-# 2. generate the Jump and store it
-
-# parts(bd_uwd, :Box)
-
-# system(xs[1]).intensity
-# interface(xs[1]).affects
-
-# supertype(ConstantRateJump)
-
-# states(2)
-# state_map
-
-# preimage(state_map, 1)
-# state_map(states(1)) # which global states come from states in box 1?
+# 1. for each box get the map from local states to global states (i.e. state_map(states(b)))
+# 2. make the rate function and affects! function
+# 3. generate the Jump and store it
 
 jumps = Vector{JumpProcesses.AbstractJump}(undef, length(xs))
 
@@ -106,5 +94,21 @@ jprob = JumpProblem(dprob, Direct(), jumps...)
 sol = solve(jprob, SSAStepper())
 
 plot(sol)
+using Catlab.Graphics, Graphviz_jll
+to_graphviz(bd_uwd, box_labels = :name, junction_labels = :variable, edge_attrs=Dict(:len => ".75"))
+
+
+# parts(bd_uwd, :Box)
+
+# system(xs[1]).intensity
+# interface(xs[1]).affects
+
+# supertype(ConstantRateJump)
+
+# states(2)
+# state_map
+
+# preimage(state_map, 1)
+# state_map(states(1)) # which global states come from states in box 1?
 
 end
