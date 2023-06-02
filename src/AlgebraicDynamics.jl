@@ -9,4 +9,6 @@ include("uwd_dynam.jl")
 include("dwd_dynam.jl")
 include("cpg_dynam.jl")
 
+include("stochastic.jl")
+
 end # module
