@@ -57,17 +57,31 @@ UWDDynam.exposed_states(r::PoissonResourceSharer, u::AbstractVector) = exposed_s
 # --------------------------------------------------------------------------------
 # the birth-death process model
 
-bd_uwd = @relation (x,) begin
-    birth(x)    
+draw_uwd(x) = to_graphviz(x, box_labels = :name, junction_labels = :variable, edge_attrs=Dict(:len => ".75"))
+
+b_uwd = @relation (x,) begin
+    birth(x)
+end
+
+d_uwd = @relation (x,) begin
     death(x)
 end
 
+# Define transformations between the composition patterns
+z_uwd = @relation (x, ) begin end
+b_transform  = ACSetTransformation(z_uwd, b_uwd, Junction=[1], OuterPort=[1])
+d_transform = ACSetTransformation(z_uwd, d_uwd, Junction=[1], OuterPort=[1])
+
+bd_uwd = ob(pushout(b_transform, d_transform))
+draw_uwd(bd_uwd)
+
+# make the Poisson resource sharers
 birth_rs = PoissonResourceSharer(1, (u,p,t) -> p.λ, [1])
-death_rs = PoissonResourceSharer(1, (u,p,t) -> u[1]>0 ? p.μ : 0.0, [-1])
+death_rs = PoissonResourceSharer(1, (u,p,t) -> u[1]>0 ? u[1]*p.μ : 0.0, [-1])
 
 xs = [birth_rs, death_rs]
 
-p = (λ=1.95,μ=2)
+p = (λ=2,μ=0.5)
 
 S′ = UWDDynam.induced_states(bd_uwd, xs)
 S = coproduct((FinSet∘nstates).(xs))
@@ -87,26 +101,24 @@ for b in parts(bd_uwd, :Box)
     end
     affect!(integrator) = begin
         for i in eachindex(states_b)
-            integrator.u[states_b[i]] = +(integrator.u[states_b[i]], interface(xs[b]).affects[i])
+            integrator.u[states_b[i]] = integrator.u[states_b[i]] + interface(xs[b]).affects[i]
         end
     end
     jumps[b] = ConstantRateJump(rate, affect!)
 end
 
-dprob = DiscreteProblem([10], (0.0,1000.0), p)
+dprob = DiscreteProblem([0], (0.0,100.0), p)
 jprob = JumpProblem(dprob, Direct(), jumps...)
 
 sol = solve(jprob, SSAStepper())
-
-plot(sol)
-to_graphviz(bd_uwd, box_labels = :name, junction_labels = :variable, edge_attrs=Dict(:len => ".75"))
+plot(sol,label=false)
 
 # --------------------------------------------------------------------------------
 # the ubiquitous SIR model
 
 sir_uwd = @relation (S,I,R) begin
-    birth(S,I)  
-    death(I,R)
+    infection(S,I)  
+    recovery(I,R)
 end
 
 to_graphviz(sir_uwd, box_labels = :name, junction_labels = :variable, edge_attrs=Dict(:len => ".75"))
@@ -151,4 +163,3 @@ jprob = JumpProblem(dprob, Direct(), jumps...)
 
 sol = solve(jprob, SSAStepper())
 plot(sol,label=["S" "I" "R"])
-
