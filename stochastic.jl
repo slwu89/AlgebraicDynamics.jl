@@ -1,5 +1,4 @@
-module StochasticDynam
-using ..UWDDynam
+using AlgebraicDynamics.UWDDynam
 
 using Catlab
 using Catlab.WiringDiagrams, Catlab.Programs
@@ -16,6 +15,10 @@ import DelayDiffEq: DDEProblem
 using Plots
 
 using JumpProcesses
+using Catlab.Graphics, Graphviz_jll
+
+# --------------------------------------------------------------------------------
+# resource sharers but with "affects" in the interface for stochastic systems
 
 struct PoissonUndirectedSystem{T} <: UWDDynam.AbstractUndirectedSystem{T}
     nstates::Int
@@ -40,8 +43,8 @@ function PoissonResourceSharer(nstates, intensity, affects)
     )
 end
 
-system(r::PoissonResourceSharer) = r.system 
-interface(r::PoissonResourceSharer) = r.interface
+UWDDynam.system(r::PoissonResourceSharer) = r.system 
+UWDDynam.interface(r::PoissonResourceSharer) = r.interface
 
 UWDDynam.ports(r::PoissonResourceSharer) = ports(interface(r))
 UWDDynam.nports(r::PoissonResourceSharer) = nports(interface(r))
@@ -51,14 +54,16 @@ UWDDynam.portmap(r::PoissonResourceSharer) = portmap(system(r))
 UWDDynam.portfunction(r::PoissonResourceSharer) = portfunction(system(r))
 UWDDynam.exposed_states(r::PoissonResourceSharer, u::AbstractVector) = exposed_states(system(r), u)
 
-birth_rs = PoissonResourceSharer(1, (u,p,t) -> p.λ, [1])
-death_rs = PoissonResourceSharer(1, (u,p,t) -> u[1]>0 ? p.μ : 0.0, [-1])
+# --------------------------------------------------------------------------------
+# the birth-death process model
 
-# the BD setup
 bd_uwd = @relation (x,) begin
     birth(x)    
     death(x)
 end
+
+birth_rs = PoissonResourceSharer(1, (u,p,t) -> p.λ, [1])
+death_rs = PoissonResourceSharer(1, (u,p,t) -> u[1]>0 ? p.μ : 0.0, [-1])
 
 xs = [birth_rs, death_rs]
 
@@ -94,21 +99,56 @@ jprob = JumpProblem(dprob, Direct(), jumps...)
 sol = solve(jprob, SSAStepper())
 
 plot(sol)
-using Catlab.Graphics, Graphviz_jll
 to_graphviz(bd_uwd, box_labels = :name, junction_labels = :variable, edge_attrs=Dict(:len => ".75"))
 
+# --------------------------------------------------------------------------------
+# the ubiquitous SIR model
 
-# parts(bd_uwd, :Box)
-
-# system(xs[1]).intensity
-# interface(xs[1]).affects
-
-# supertype(ConstantRateJump)
-
-# states(2)
-# state_map
-
-# preimage(state_map, 1)
-# state_map(states(1)) # which global states come from states in box 1?
-
+sir_uwd = @relation (S,I,R) begin
+    birth(S,I)  
+    death(I,R)
 end
+
+to_graphviz(sir_uwd, box_labels = :name, junction_labels = :variable, edge_attrs=Dict(:len => ".75"))
+
+infection_rs = PoissonResourceSharer(2, (u,p,t) -> all(u .≥ 1) ? p.β*u[1]*u[2] : 0.0, [-1,1])
+recovery_rs = PoissonResourceSharer(2, (u,p,t) -> u[1] > 0 ? p.γ*u[1] : 0.0, [-1,1])
+
+xs = [infection_rs, recovery_rs]
+
+# parameters and initial conditions from sir-julia repo
+tmax = 50.0
+u0 = [990,10,0]
+p = (β=0.5/sum(u0),γ=0.25)
+
+# make the jump system
+S′ = UWDDynam.induced_states(sir_uwd, xs)
+S = coproduct((FinSet∘nstates).(xs))
+states(b::Int) = legs(S)[b].func # box (b) -> states it has access to in coproduct (before identifying common states)
+state_map = legs(S′)[1] # map from coproduct states to reduced states
+
+# 1. for each box get the map from local states to global states (i.e. state_map(states(b)))
+# 2. make the rate function and affects! function
+# 3. generate the Jump and store it
+
+jumps = Vector{JumpProcesses.AbstractJump}(undef, length(xs))
+
+for b in parts(sir_uwd, :Box)
+    states_b = state_map(states(b))
+    rate(u,p,t) = begin
+        system(xs[b]).intensity(u[states_b], p, t)
+    end
+    affect!(integrator) = begin
+        for i in eachindex(states_b)
+            integrator.u[states_b[i]] = integrator.u[states_b[i]] + interface(xs[b]).affects[i]
+        end
+    end
+    jumps[b] = ConstantRateJump(rate, affect!)
+end
+
+dprob = DiscreteProblem(u0, (0.0,tmax), p)
+jprob = JumpProblem(dprob, Direct(), jumps...)
+
+sol = solve(jprob, SSAStepper())
+plot(sol,label=["S" "I" "R"])
+
